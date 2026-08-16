@@ -1,4 +1,4 @@
-# Olist Medallion Analytics
+# ShipSight: E-Commerce Delivery Analytics Pipeline
 
 An end-to-end SQL data pipeline that transforms raw Brazilian e-commerce order
 data into an analytics-ready star schema, using the **Medallion Architecture**
@@ -45,8 +45,8 @@ Raw CSVs (Kaggle)
 ## Repository Structure
 
 ```
-Olist-Medallion-Analytics/
-├── datasets/                     # place downloaded Olist CSVs here
+ShipSight-E-Commerce-Delivery-Analytics-Pipeline/
+├── Dataset/                       # place downloaded Olist CSVs here
 ├── script_layers/
 │   ├── init_database.sql         # creates bronze / silver / gold databases
 │   ├── bronze/
@@ -70,6 +70,7 @@ Olist-Medallion-Analytics/
 ├── validation_checks/
 │   ├── bronze_validation_checks.sql
 │   └── silver_validation_checks.sql
+├── LICENSE
 └── README.md
 ```
 
@@ -99,11 +100,38 @@ inflate.
   and `_source_file`, so any row can be traced back to when and from which
   file it was loaded.
 
+## Challenges and Solutions
+
+- **Customer grain mismatch.** Olist issues a new `customer_id` for every
+  order a person places, so grouping directly by `customer_id` massively
+  inflates customer counts and understates repeat-purchase behavior. The fix
+  was building `dim_customers` on `customer_unique_id` instead, and treating
+  `customer_id` purely as an order-level foreign key.
+- **Undelivered orders skewing delivery metrics.** A meaningful share of
+  orders never reach `delivered_customer_date` (cancelled, still in transit,
+  etc.). Computing `delivery_days` and `is_delayed` as `NULL` for these
+  orders — rather than defaulting to 0 or excluding the row entirely —
+  keeps `dim_customers` and `fact_order_items` row counts consistent while
+  still letting delivery-performance queries filter cleanly with
+  `WHERE delivery_days IS NOT NULL`.
+- **Silent data loss vs. traceable rejection.** Early drafts simply filtered
+  out `order_items` rows with a missing `order_id`/`product_id` foreign key
+  or a non-numeric price. That's invisible — nothing tells you *how much*
+  data was lost or *why*. Replacing the filter with a quarantine table
+  (`silver.quarantine_order_items`) plus a reconciliation check
+  (`good_rows + quarantined_rows = bronze_row_count`) makes data loss a
+  measurable, auditable number instead of a silent gap.
+- **Type safety during casting.** Bronze columns are stored as `VARCHAR` on
+  purpose, since a raw CSV can contain blanks, malformed numbers, or bad
+  dates that would break a strongly-typed load. Casting is deferred to the
+  silver layer and guarded with `REGEXP` checks first, so a single bad row
+  can't fail the entire batch insert.
+
 ## How to Run
 
 **Prerequisites:** MySQL 8.0+ (needed for window functions used in `load_silver.sql`)
 
-1. Download the dataset from Kaggle and place these files in `/datasets`:
+1. Download the dataset from Kaggle and place these files in `/Dataset`:
    - `product_category_name_translation.csv`
    - `olist_products_dataset.csv`
    - `olist_customers_dataset.csv`
@@ -151,3 +179,7 @@ inflate.
 - Add a `dim_date` table for cleaner time-intelligence queries
 - Connect the gold layer to Power BI / Tableau for a dashboard deliverable
 - Add CI (GitHub Actions) to lint and dry-run the SQL on push
+
+## Author
+
+Suraj Pratap
